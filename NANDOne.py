@@ -10,6 +10,7 @@ import mmap
 import os
 
 NAND_SIZE = 0x13C000000
+NAND_SPLIT = NAND_SIZE / 0x20
 LOG_BLOCK_SZ = 0x1000
 
 MAGIC_SIZE = 0x4
@@ -17,12 +18,14 @@ MAGIC_SIZE = 0x4
 SFBX_MAGIC = 'SFBX'
 GFCX_MAGIC = 'GFCX'
 GFCU_MAGIC = 'GFCU'
+XVD_MAGIC = 'msft-xvd'
+
+XVD_MAGIC_START = 0x200
 
 SFBX_START = [0x810000,0x10000]
 SFBX_MAGIC_START = 0x0
 
 SFBX_ENTS_START = 0x10
-SFBX_ENTS_SIZE = 0x3B0
 
 SFBX_BLOB_START = 0x3C0
 SFBX_BLOB_SIZE = 0x40
@@ -31,7 +34,7 @@ SFBX_EN_SIZE = 0x10
 SFBX_EN_LBA_START = 0x0 
 SFBX_EN_SZ_START = 0x4 
 
-SFBX_ENTS_MAXCNT = (SFBX_ENTS_SIZE-SFBX_ENTS_START) / SFBX_EN_SIZE
+SFBX_ENTS_MAXCNT_FIX = 0x3B
 
 GFCU_MAGIC_START = 0x28
 GFCU_ENTS_START = 0xF0
@@ -81,96 +84,128 @@ def ReadUInt32_BE(data,addr):
 def ReadString(data,addr,size):
 	return data[addr:addr+size]
 
-def GetFilesize(filename):
-	st = os.stat(filename)
+def GetFilesize(fn):
+	st = os.stat(fn)
 	return st.st_size
 
-def FileExists(filename):
-	return os.path.isfile(filename)
+def FileExists(fn):
+	return os.path.isfile(fn)
 
 def CheckMagic(indata, pos, magic):
 	read = ReadUInt32_LE(indata, pos)
 	comp = ReadUInt32_LE(magic, 0)
 	if read != comp:
-		return -1 # Error
+		return -1
 	return 0
 
-def OpenFile(filename, start, length):
-	file = open(filename, 'r+b')
+def ReadFile(fn, start, length):
+	file = open(fn, 'r+b')
 	file.seek(start)
 	data = file.read(length)
 	file.close()
 	return data
 
-def ScanSFBX(filename):
-	with open(filename, 'r+b') as file:
-		mm = mmap.mmap(file.fileno(), 0)
-		for i in xrange(0,(NAND_SIZE-LOG_BLOCK_SZ), LOG_BLOCK_SZ):
-			sfbx_magic = ReadString(mm, i,len(SFBX_MAGIC))
+def ScanForSFBX(fn):
+	file = open(fn, 'r+b')
+	sfbx_addr = 0
+	for i in xrange(NAND_SIZE/NAND_SPLIT):
+		mm = mmap.mmap(file.fileno(),length=NAND_SPLIT, offset=i*NAND_SPLIT)
+		for j in xrange(0,(NAND_SPLIT-LOG_BLOCK_SZ), LOG_BLOCK_SZ):
+			sfbx_magic = ReadString(mm, j,len(SFBX_MAGIC))
 			if(CheckMagic(sfbx_magic, SFBX_MAGIC_START, SFBX_MAGIC) == 0):
-				print('Found \'SFBX\' @ addr {:#09x}!'.format(i))
-				print('Append the addr to SFBX_START[]-list!')
-				return i
-		return 0
-	mm.close()
+				sfbx_addr = j + (i * NAND_SPLIT)
+				break
+		mm.close()
+	file.close()
+	return sfbx_addr
 	
-def DumpSFBX(filename):
-	with open(filename, 'r+b') as file:
-		mm = mmap.mmap(file.fileno(), 0)
-		for i in xrange(len(SFBX_START)):
-			sfbx_magic = ReadString(mm, SFBX_START[i],len(SFBX_MAGIC))
-			if(CheckMagic(sfbx_magic, SFBX_MAGIC_START, SFBX_MAGIC) == 0):
-				addr = SFBX_START[i] + SFBX_ENTS_START
-				break	
-			if (i == len(SFBX_START)-1):
-				return 0
-		
-		#Read adresses in array		
-		for j in xrange(SFBX_ENTS_MAXCNT):
-			total_pos = addr + j * SFBX_EN_SIZE
-			entry = ReadString(mm, total_pos, SFBX_EN_SIZE)
+def GetSizeSFBX(fn, addr):
+	if(addr == 0):
+		return 0
+	for i in xrange(SFBX_ENTS_MAXCNT_FIX):
+		total_pos = addr + i * SFBX_EN_SIZE
+		entry = ReadFile(fn, total_pos, SFBX_EN_SIZE)
 
-			lba = ReadUInt32_LE(entry, SFBX_EN_LBA_START)
-			sz = ReadUInt32_LE(entry, SFBX_EN_SZ_START)
+		lba = ReadUInt32_LE(entry, SFBX_EN_LBA_START)
+		sz = ReadUInt32_LE(entry, SFBX_EN_SZ_START)
+		if ((lba*LOG_BLOCK_SZ) == addr):
+			return (sz * LOG_BLOCK_SZ) / 0x10 # Needs division by 0x10
+	return 0
+	
+def DumpSFBX(fn):
+	for i in xrange(len(SFBX_START)):
+		sfbx_magic = ReadFile(fn, SFBX_START[i], len(SFBX_MAGIC))
+		if(CheckMagic(sfbx_magic, SFBX_MAGIC_START, SFBX_MAGIC) == 0):
+			sfbxaddr = SFBX_START[i]
+			break
+		if (i == len(SFBX_START)-1):
+			print('SFBX data wasn\'t found. Scanning for it!')
+			sfbxaddr = ScanForSFBX(fn)
+			break
+		
+	sfbxsize = GetSizeSFBX(fn,sfbxaddr)
+	sfbxaddr = sfbxaddr + SFBX_ENTS_START # Don't want the header
+	
+	if(sfbxsize == 0):
+		print('Size of SFBX wasn\'t found in Adresstable')
+		return 0
+		
+	sfbx_ents_size = sfbxsize - SFBX_BLOB_SIZE - SFBX_ENTS_START
+	sfbx_ents_maxcnt = sfbx_ents_size / SFBX_EN_SIZE
+		
+	#Read adresses in array		
+	for j in xrange(sfbx_ents_maxcnt):
+		total_pos = sfbxaddr + j * SFBX_EN_SIZE
+		entry = ReadFile(fn, total_pos, SFBX_EN_SIZE)
+
+		lba = ReadUInt32_LE(entry, SFBX_EN_LBA_START)
+		sz = ReadUInt32_LE(entry, SFBX_EN_SZ_START)
 			
-			magic = ReadString(mm, lba * LOG_BLOCK_SZ, MAGIC_SIZE)
+		fileaddr = lba * LOG_BLOCK_SZ
 			
-			sfbx_arr.append([])
-			sfbx_arr[-1].append(total_pos)
-			sfbx_arr[-1].append(lba)
-			sfbx_arr[-1].append(sz)
-			sfbx_arr[-1].append(magic)
-	mm.close()
+		# msft-xvd magic doesnt start at 0x0!
+		xvd = ReadFile(fn, fileaddr+XVD_MAGIC_START, len(XVD_MAGIC))
+		if(xvd == XVD_MAGIC):
+			magic = 'XVD'
+		else:
+			magic = ReadFile(fn, fileaddr, MAGIC_SIZE)
+			
+		sfbx_arr.append([])
+		sfbx_arr[-1].append(total_pos)
+		sfbx_arr[-1].append(lba)
+		sfbx_arr[-1].append(sz)
+		sfbx_arr[-1].append(magic)
 	return j-1
 
-def ExtractSFBXData():
-	with open(filename, 'r+b') as infile:
-		mm = mmap.mmap(infile.fileno(), 0)
-		count = 0
-		for i in xrange(len(sfbx_arr)):
-			if (sfbx_arr[i][1] != 0) and (sfbx_arr[i][2] != 0):
-				count = count + 1
-				addr = sfbx_arr[i][1] * LOG_BLOCK_SZ
-				size = sfbx_arr[i][2] * LOG_BLOCK_SZ
-				magic = sfbx_arr[i][3]
+def ExtractSFBXData(fn):
+	infile = open(fn, 'r+b')
+	count = 0
+	for i in xrange(len(sfbx_arr)):
+		if (sfbx_arr[i][2] != 0): # Only extract if entry holds a size
+			count = count + 1
+			addr = sfbx_arr[i][1] * LOG_BLOCK_SZ
+			size = sfbx_arr[i][2] * LOG_BLOCK_SZ
+			magic = sfbx_arr[i][3]
 			
-				if (magic.isalpha()):
-					fn_out = '{:#02}_{}.bin'.format(count,magic)
-				else:
-					fn_out = '{:#02}.bin'.format(count)
-				outfile = open(fn_out, 'w+b')
-				print('Extracting @ {:#08x}, size: {}kb to \'{}\''.\
-						format(addr,size/1024,fn_out))
-				outfile.write(mm[addr:addr+size])	
-				outfile.close()
-
-	mm.close()
+			if (magic.isalpha()):
+				fn_out = '{:#02}.{}'.format(count,magic)
+			else:
+				fn_out = '{:#02}.bin'.format(count)
+			outfile = open(fn_out, 'w+b')
+			print('Extracting @ {:#08x}, size: {}kb to \'{}\''.\
+					format(addr,size/1024,fn_out))
+					
+			mm = mmap.mmap(infile.fileno(), length=size, offset=addr)
+			outfile.write(mm)	
+			outfile.close()
+			mm.close()
+	infile.close()
 
 def PrintSFBX():
 	print('\nSFBX Entries')
 	print('-----------\n')
 	for i in xrange(len(sfbx_arr)):
-		if (sfbx_arr[i][1] == 0):
+		if (sfbx_arr[i][2] == 0):
 			continue                                               
 		print('Entry 0x{0:02X} : found @ pos: {1:08X}'.\
 				format(i, sfbx_arr[i][0]))
@@ -235,8 +270,7 @@ def PrintGFCU():
 				format((gfcu_arr[i][3] * LOG_BLOCK_SZ),\
 					(gfcu_arr[i][4] * LOG_BLOCK_SZ)))
 
-action_arr = 	['sfbxscan','Scans for SFBX address'],\
-				['info', 'Prints the parsed entries'],\
+action_arr =	['info', 'Prints the parsed entries'],\
 				['extract','Extracts nand content']
 
 def PrintUsage():
@@ -278,11 +312,7 @@ if (GetFilesize(filename) != NAND_SIZE):
 	print('Invalid filesize. Aborting!')
 	sys.exit(-4)
 
-if (action == action_arr[0][0]): # 'sfbxscan'
-	ScanSFBX(filename)
-	sys.exit(-4)
-
-print('\nDumping SFBX Entries... ')
+print('\nParsing SFBX Entries... ')
 sfbx_len = DumpSFBX(filename)
 if (sfbx_len == 0):
 	print('SFBX not found! Aborting!\n')
@@ -302,20 +332,20 @@ if (gfcu_size == 0):
 	print ('GFCU Entry not found. Exiting!')
 	sys.exit(-4)
 
-gfcu = OpenFile(filename, gfcu_addr, gfcu_size)
+gfcu = ReadFile(filename, gfcu_addr, gfcu_size)
 if CheckMagic(gfcu, GFCU_MAGIC_START, GFCU_MAGIC) == -1:
 	print ('GFCU MAGIC not found. Exiting!')
 	sys.exit(-4)
 
-print('Dumping GFCU Entries... ')
+print('Parsing GFCU Entries... ')
 gfcu_len = DumpGFCU(gfcu,GFCU_ENTS_START)
 print('Found {} Entries\n'.format(gfcu_len))
 
 print('Xbox ONE Kernel-Version: {}'.format(DumpKernelVer(gfcu)))
 	
 
-if (action == action_arr[1][0]): # 'info'
+if (action == action_arr[0][0]): # 'info'
 	PrintSFBX()
 	PrintGFCU()
-elif (action == action_arr[2][0]): # 'extract'
-	ExtractSFBXData()
+elif (action == action_arr[1][0]): # 'extract'
+	ExtractSFBXData(filename)
