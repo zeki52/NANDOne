@@ -34,7 +34,7 @@ Available Action:
 	extract		Extracts nand content
 
 Example:
-	NANDOne.py sfbxscan nanddump.bin
+	NANDOne.py info nanddump.bin
 
 
 Changelog
