@@ -22,10 +22,6 @@ Actions
 				to screen
 	
 	extract		Extracts the parsed entries from SFBX Table
-	
-	sfbxscan	If the SFBX adress of your NAND isn't contained, scan
-				for the MAGIC/Header and append it to the list in the
-				python script
 
 
 Usage
@@ -34,9 +30,26 @@ Usage:
 	NANDOne.py [action] [dump]
 
 Available Action:
-	sfbxscan		Scans for SFBX address
 	info		Prints the parsed entries
 	extract		Extracts nand content
 
 Example:
 	NANDOne.py sfbxscan nanddump.bin
+
+
+Changelog
+===========
+v0.xx
+- ExtractSFBXdata: Extracting the bootblock @ addr 0x0
+- mmap: Fixing memory issues on 32bit systems by reading in chunks
+- DumpSFBX: SFBX size is now read dynamically, not fixed anymore
+- 'sfbxscan' is obsolete, that's done automatically now, if needed
+- XVD header gets detected and printed in info output
+- Filetype-magic is appended to extracted filenames
+- Some cleanup
+v0.02
+- Support for parsing and extracting SFBX entries
+- Possibility to scan for SFBX block
+- Additional error checking
+v0.01
+- Initial release
