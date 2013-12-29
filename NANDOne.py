@@ -89,6 +89,13 @@ def GetFilesize(fn):
 
 def FileExists(fn):
 	return os.path.isfile(fn)
+	
+def MakeDir(path):
+	try:
+		os.makedirs(path)
+	except OSError:
+		if not os.path.isdir(path):
+			raise
 
 def CheckMagic(indata, pos, magic):
 	read = ReadUInt32_LE(indata, pos)
@@ -179,6 +186,8 @@ def DumpSFBX(fn):
 def ExtractSFBXData(fn):
 	infile = open(fn, 'r+b')
 	count = 0
+	foldername = os.path.basename(fn).replace('.','_')
+	MakeDir(foldername)
 	for i in xrange(len(sfbx_arr)):
 		if (sfbx_arr[i][2] != 0): # Only extract if entry holds a size
 			count = count + 1
@@ -190,7 +199,10 @@ def ExtractSFBXData(fn):
 				fn_out = '{:#02}.{}'.format(count,magic)
 			else:
 				fn_out = '{:#02}.bin'.format(count)
-			outfile = open(fn_out, 'w+b')
+				
+			path_out = os.path.join(foldername, fn_out)
+			
+			outfile = open(path_out, 'w+b')
 			print('Extracting @ {:#08x}, size: {}kb to \'{}\''.\
 					format(addr,size/1024,fn_out))
 					
@@ -255,6 +267,8 @@ def DumpGFCU(data,startaddr):
 		gfcu_arr[-1].append(sz)
 		gfcu_arr[-1].append(blk)
 		gfcu_arr[-1].append(un)
+		
+	return i-1
 				
 def PrintGFCU():
 	print('\nGFCU Entries')
@@ -268,6 +282,30 @@ def PrintGFCU():
 				format((gfcu_arr[i][3] * LOG_BLOCK_SZ),\
 					(gfcu_arr[i][4] * LOG_BLOCK_SZ)))
 
+def FindGFCU():
+	gfcx_addr, gfcx_size = GetEntryByMagic(GFCX_MAGIC)
+	if (gfcx_addr == 0):
+		print ('\nGFCX MAGIC not found. Exiting!')
+		return -1
+
+	gfcu_addr = gfcx_addr + gfcx_size
+	gfcu_size = GetEntryByAddr(gfcu_addr)
+
+	if (gfcu_size == 0):
+		print ('\nGFCU Entry not found. Exiting!')
+		return -2
+
+	gfcu = ReadFile(filename, gfcu_addr, gfcu_size)
+	if CheckMagic(gfcu, GFCU_MAGIC_START, GFCU_MAGIC) == -1:
+		print ('\nGFCU MAGIC not found. Exiting!')
+		return -3
+
+	print('\nParsing GFCU Entries... ')
+	gfcu_len = DumpGFCU(gfcu,GFCU_ENTS_START)
+	print('\nFound {} Entries'.format(gfcu_len))
+	print('\nXbox ONE Kernel-Version: {}'.format(DumpKernelVer(gfcu)))
+	return gfcu_len
+					
 action_arr =	['info', 'Prints the parsed entries'],\
 				['extract','Extracts nand content']
 
@@ -316,34 +354,12 @@ if (sfbx_len == 0):
 	print('SFBX not found! Aborting!\n')
 	sys.exit(-4)
 print('Found {} Entries\n'.format(sfbx_len))
-
-
-gfcx_addr, gfcx_size = GetEntryByMagic(GFCX_MAGIC)
-if (gfcx_addr == 0):
-	print ('GFCX MAGIC not found. Exiting!')
-	sys.exit(-4)
-	
-gfcu_addr = gfcx_addr + gfcx_size
-gfcu_size = GetEntryByAddr(gfcu_addr)
-
-if (gfcu_size == 0):
-	print ('GFCU Entry not found. Exiting!')
-	sys.exit(-4)
-
-gfcu = ReadFile(filename, gfcu_addr, gfcu_size)
-if CheckMagic(gfcu, GFCU_MAGIC_START, GFCU_MAGIC) == -1:
-	print ('GFCU MAGIC not found. Exiting!')
-	sys.exit(-4)
-
-print('Parsing GFCU Entries... ')
-gfcu_len = DumpGFCU(gfcu,GFCU_ENTS_START)
-print('Found {} Entries\n'.format(gfcu_len))
-
-print('Xbox ONE Kernel-Version: {}'.format(DumpKernelVer(gfcu)))
 	
 
 if (action == action_arr[0][0]): # 'info'
 	PrintSFBX()
+	if (FindGFCU() <= 0):
+		sys.exit(-4)
 	PrintGFCU()
 elif (action == action_arr[1][0]): # 'extract'
 	ExtractSFBXData(filename)
