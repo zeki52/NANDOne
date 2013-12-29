@@ -6,7 +6,6 @@ BUILD_VER = 'v0.02'
 import sys
 import getopt
 import struct
-import mmap
 import os
 
 NAND_SIZE = 0x13C000000
@@ -109,13 +108,13 @@ def ScanForSFBX(fn):
 	file = open(fn, 'r+b')
 	sfbx_addr = 0
 	for i in xrange(NAND_SIZE/NAND_SPLIT):
-		mm = mmap.mmap(file.fileno(),length=NAND_SPLIT, offset=i*NAND_SPLIT)
+		file.seek(i*NAND_SPLIT)
+		buf = file.read(NAND_SPLIT)
 		for j in xrange(0,(NAND_SPLIT-LOG_BLOCK_SZ), LOG_BLOCK_SZ):
-			sfbx_magic = ReadString(mm, j,len(SFBX_MAGIC))
+			sfbx_magic = ReadString(buf, j,len(SFBX_MAGIC))
 			if(CheckMagic(sfbx_magic, SFBX_MAGIC_START, SFBX_MAGIC) == 0):
 				sfbx_addr = j + (i * NAND_SPLIT)
 				break
-		mm.close()
 	file.close()
 	return sfbx_addr
 	
@@ -195,10 +194,9 @@ def ExtractSFBXData(fn):
 			print('Extracting @ {:#08x}, size: {}kb to \'{}\''.\
 					format(addr,size/1024,fn_out))
 					
-			mm = mmap.mmap(infile.fileno(), length=size, offset=addr)
-			outfile.write(mm)	
+			infile.seek(addr)
+			outfile.write(infile.read(size))	
 			outfile.close()
-			mm.close()
 	infile.close()
 
 def PrintSFBX():
