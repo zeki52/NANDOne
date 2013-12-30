@@ -185,20 +185,20 @@ def DumpSFBX(fn):
 
 def ExtractSFBXData(fn):
 	infile = open(fn, 'r+b')
-	count = 0
 	foldername = os.path.basename(fn).replace('.','_')
 	MakeDir(foldername)
 	for i in xrange(len(sfbx_arr)):
 		if (sfbx_arr[i][2] != 0): # Only extract if entry holds a size
-			count = count + 1
 			addr = sfbx_arr[i][1] * LOG_BLOCK_SZ
 			size = sfbx_arr[i][2] * LOG_BLOCK_SZ
 			magic = sfbx_arr[i][3]
 			
 			if (magic.isalpha()):
-				fn_out = '{:#02}.{}'.format(count,magic)
+				ext = magic
 			else:
-				fn_out = '{:#02}.bin'.format(count)
+				ext = 'BIN'
+
+			fn_out = '{:X}_{:X}.{}'.format(addr,addr+size,ext)
 				
 			path_out = os.path.join(foldername, fn_out)
 			
